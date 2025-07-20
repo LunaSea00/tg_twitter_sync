@@ -16,6 +16,9 @@ from src.dm.monitor import DMMonitor
 from src.dm.processor import DMProcessor
 from src.dm.notifier import TelegramNotifier
 from src.dm.store import DMStore
+from src.confirmation.confirmation_manager import ConfirmationManager
+from src.confirmation.preview_generator import PreviewGenerator
+from src.confirmation.button_handler import ButtonHandler
 
 class TwitterBot:
     def __init__(self):
@@ -34,6 +37,11 @@ class TwitterBot:
         self.dm_processor = None
         self.dm_monitor = None
         self.dm_monitor_task = None
+        
+        # 确认功能相关组件
+        self.confirmation_manager = None
+        self.preview_generator = None
+        self.button_handler = None
     
     async def initialize(self):
         """初始化所有组件"""
@@ -56,6 +64,7 @@ class TwitterBot:
                 self.config.tweet_max_length
             )
             self.auth_service = AuthService(self.config.authorized_user_id)
+            # 暂时先创建handlers，稍后会传递确认功能组件
             self.handlers = TelegramHandlers(
                 self.twitter_client, 
                 self.auth_service, 
@@ -63,6 +72,26 @@ class TwitterBot:
             )
             self.telegram_bot = TelegramBot(self.config.telegram_token, self.handlers)
             self.health_server = HealthServer(self.config.health_port)
+            
+            # 初始化确认功能组件
+            if self.config.enable_confirmation:
+                self.confirmation_manager = ConfirmationManager(self.config)
+                self.preview_generator = PreviewGenerator(self.config)
+                self.button_handler = ButtonHandler(
+                    self.twitter_client,
+                    self.confirmation_manager,
+                    self.preview_generator,
+                    self.config
+                )
+                # 将确认功能组件传递给handlers
+                self.handlers.set_confirmation_components(
+                    self.confirmation_manager,
+                    self.preview_generator,
+                    self.button_handler
+                )
+                self.logger.info("✅ 确认功能组件初始化成功")
+            else:
+                self.logger.info("🔕 确认功能已禁用")
             
             # 初始化DM监听组件
             if self.config.enable_dm_monitoring:
@@ -174,6 +203,10 @@ class TwitterBot:
             
             if self.health_server:
                 await self.health_server.stop()
+            
+            # 清理确认管理器
+            if self.confirmation_manager:
+                self.confirmation_manager.cleanup()
             
             self._running = False
             self.logger.info("✅ 机器人已停止")

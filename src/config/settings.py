@@ -57,6 +57,12 @@ class Config:
         # 启动通知配置
         self.send_startup_notification = os.getenv('SEND_STARTUP_NOTIFICATION', 'true').lower() == 'true'
         
+        # 确认功能配置
+        self.enable_confirmation = os.getenv('ENABLE_CONFIRMATION', 'true').lower() == 'true'
+        self.confirmation_timeout = int(os.getenv('CONFIRMATION_TIMEOUT', '300'))  # 5分钟超时
+        self.require_confirmation_for_all = os.getenv('REQUIRE_CONFIRMATION_FOR_ALL', 'true').lower() == 'true'
+        self.confirmation_button_timeout = int(os.getenv('CONFIRMATION_BUTTON_TIMEOUT', '900'))  # 15分钟按钮超时
+        
         self._validate_config()
         logger.info("配置加载完成")
     
@@ -110,6 +116,13 @@ class Config:
         
         if self.dm_store_max_age_days <= 0:
             raise ConfigurationError("DM_STORE_MAX_AGE_DAYS必须大于0")
+        
+        # 验证确认功能配置
+        if self.confirmation_timeout <= 0:
+            raise ConfigurationError("CONFIRMATION_TIMEOUT必须大于0")
+        
+        if self.confirmation_button_timeout <= 0:
+            raise ConfigurationError("CONFIRMATION_BUTTON_TIMEOUT必须大于0")
     
     @property
     def twitter_credentials(self) -> Dict[str, str]:
@@ -153,7 +166,11 @@ class Config:
             'dm_target_chat_id': '***' if self.dm_target_chat_id else None,
             'dm_store_file': self.dm_store_file,
             'dm_store_max_age_days': self.dm_store_max_age_days,
-            'send_startup_notification': self.send_startup_notification
+            'send_startup_notification': self.send_startup_notification,
+            'enable_confirmation': self.enable_confirmation,
+            'confirmation_timeout': self.confirmation_timeout,
+            'require_confirmation_for_all': self.require_confirmation_for_all,
+            'confirmation_button_timeout': self.confirmation_button_timeout
         }
 
 # 全局配置实例

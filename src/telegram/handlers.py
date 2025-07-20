@@ -14,6 +14,17 @@ class TelegramHandlers:
         self.auth_service = auth_service
         self.config = config
         self.media_processor = MediaProcessor(config)
+        
+        # 确认功能组件（稍后由主程序设置）
+        self.confirmation_manager = None
+        self.preview_generator = None
+        self.button_handler = None
+    
+    def set_confirmation_components(self, confirmation_manager, preview_generator, button_handler):
+        """设置确认功能组件"""
+        self.confirmation_manager = confirmation_manager
+        self.preview_generator = preview_generator
+        self.button_handler = button_handler
     
     def _check_authorization(self, user_id: int) -> bool:
         """检查用户授权"""
@@ -44,37 +55,37 @@ class TelegramHandlers:
         try:
             self._check_authorization(update.effective_user.id)
             
-            help_text = f"""
-📖 **使用帮助**
+            help_text = f"""📖 *使用帮助*
 
-**基本命令：**
+*基本命令：*
 • /start - 开始使用机器人
 • /help - 显示此帮助信息
 • /status - 检查服务状态
 
-**发送推文：**
+*发送推文：*
 • 直接发送文本消息即可发布到Twitter
 • 消息长度限制：{self.config.tweet_max_length}字符
 • 支持中英文混合内容
 
-**发送图片推文：**
+*发送图片推文：*
 • 发送图片（支持最多4张）
 • 支持格式：JPG, PNG, GIF
 • 文件大小限制：{self.config.max_image_size // 1024 // 1024}MB
 • 可以添加图片说明文字
 
-**DM监听功能：**
+*DM监听功能：*
 • /dm_status - 查看私信监听状态
 • 自动监听Twitter私信并转发到此聊天
 • 监听间隔：{getattr(self.config, 'dm_poll_interval', 60)}秒
 
-**注意事项：**
+*注意事项：*
 • 只有授权用户可以使用此机器人
 • 请遵守Twitter使用条款
 • 发送前请仔细检查内容
 • 支持私信和群聊消息
 
-            """
+💡 *提示：* 点击上方命令即可直接执行
+🔗 发送成功后会返回推文链接"""
             await update.message.reply_text(help_text, parse_mode='Markdown')
             
         except AuthorizationError:
@@ -116,23 +127,15 @@ class TelegramHandlers:
                 await update.message.reply_text("❌ 消息内容不能为空。")
                 return
             
-            # 显示处理状态
-            status_msg = await update.message.reply_text("⏳ 正在发送推文...")
-            
-            # 发送推文
-            result = await self.twitter_client.create_tweet(message_text)
-            
-            if result['success']:
-                success_msg = (
-                    f"✅ **推文发送成功！**\n\n"
-                    f"🆔 推文ID: `{result['tweet_id']}`\n"
-                    f"📝 内容: {result['text']}\n"
-                    f"🔗 链接: {result['url']}"
-                )
-                await status_msg.edit_text(success_msg, parse_mode='Markdown')
+            # 检查是否启用确认功能
+            if (self.confirmation_manager and 
+                self.button_handler and 
+                self.button_handler.should_require_confirmation(message_text)):
+                
+                await self._handle_with_confirmation(update, message_text)
             else:
-                error_msg = ErrorHandler.format_user_error(Exception(result.get('error', '未知错误')))
-                await status_msg.edit_text(error_msg)
+                # 直接发送（原逻辑）
+                await self._handle_direct_send(update, message_text)
                 
         except AuthorizationError:
             await update.message.reply_text("❌ 你没有权限使用此机器人。")
@@ -140,6 +143,110 @@ class TelegramHandlers:
             ErrorHandler.log_error(e, "消息处理")
             error_msg = ErrorHandler.format_user_error(e)
             await update.message.reply_text(error_msg)
+    
+    async def _handle_with_confirmation(self, update: Update, message_text: str):
+        """使用确认机制处理消息"""
+        try:
+            # 创建确认请求
+            confirmation_key = self.confirmation_manager.create_confirmation(
+                user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+                message_id=update.message.message_id,
+                text=message_text
+            )
+            
+            # 获取确认请求
+            pending_tweet = self.confirmation_manager.get_confirmation(confirmation_key)
+            if not pending_tweet:
+                await update.message.reply_text("❌ 创建确认请求失败")
+                return
+            
+            # 生成预览消息
+            preview_text = self.preview_generator.generate_preview(pending_tweet)
+            
+            # 创建确认按钮
+            keyboard = self.button_handler.create_confirmation_keyboard(confirmation_key)
+            
+            # 发送确认消息
+            await update.message.reply_text(
+                preview_text,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            ErrorHandler.log_error(e, "确认消息处理")
+            await update.message.reply_text("❌ 处理确认请求时发生错误")
+    
+    async def _handle_media_with_confirmation(self, update: Update, file_ids: List[str], 
+                                            text: str, media_type: str):
+        """使用确认机制处理媒体消息"""
+        try:
+            # 获取文件URL
+            file_urls = []
+            for file_id in file_ids:
+                try:
+                    file = await update.message.bot.get_file(file_id)
+                    file_urls.append(file.file_path)
+                except Exception as e:
+                    logger.error(f"获取文件URL失败: {e}")
+                    continue
+            
+            if not file_urls:
+                await update.message.reply_text("❌ 无法获取文件，请重试。")
+                return
+            
+            # 创建确认请求
+            confirmation_key = self.confirmation_manager.create_confirmation(
+                user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+                message_id=update.message.message_id,
+                text=text,
+                media_files=file_urls
+            )
+            
+            # 获取确认请求
+            pending_tweet = self.confirmation_manager.get_confirmation(confirmation_key)
+            if not pending_tweet:
+                await update.message.reply_text("❌ 创建确认请求失败")
+                return
+            
+            # 生成预览消息
+            preview_text = self.preview_generator.generate_preview(pending_tweet)
+            
+            # 创建确认按钮
+            keyboard = self.button_handler.create_confirmation_keyboard(confirmation_key)
+            
+            # 发送确认消息
+            await update.message.reply_text(
+                preview_text,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            ErrorHandler.log_error(e, f"{media_type}确认消息处理")
+            await update.message.reply_text("❌ 处理确认请求时发生错误")
+    
+    async def _handle_direct_send(self, update: Update, message_text: str):
+        """直接发送推文（原逻辑）"""
+        # 显示处理状态
+        status_msg = await update.message.reply_text("⏳ 正在发送推文...")
+        
+        # 发送推文
+        result = await self.twitter_client.create_tweet(message_text)
+        
+        if result['success']:
+            success_msg = (
+                f"✅ **推文发送成功！**\n\n"
+                f"🆔 推文ID: `{result['tweet_id']}`\n"
+                f"📝 内容: {result['text']}\n"
+                f"🔗 链接: {result['url']}"
+            )
+            await status_msg.edit_text(success_msg, parse_mode='Markdown')
+        else:
+            error_msg = ErrorHandler.format_user_error(Exception(result.get('error', '未知错误')))
+            await status_msg.edit_text(error_msg)
     
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理图片消息"""
@@ -158,12 +265,21 @@ class TelegramHandlers:
             # 获取标题文本
             caption = update.message.caption or ""
             
-            await self._process_media_message(
-                update, 
-                [largest_photo.file_id], 
-                caption, 
-                "图片"
-            )
+            # 检查是否启用确认功能
+            if (self.confirmation_manager and 
+                self.button_handler and 
+                self.button_handler.should_require_confirmation(caption, [largest_photo.file_id])):
+                
+                await self._handle_media_with_confirmation(
+                    update, [largest_photo.file_id], caption, "图片"
+                )
+            else:
+                await self._process_media_message(
+                    update, 
+                    [largest_photo.file_id], 
+                    caption, 
+                    "图片"
+                )
             
         except AuthorizationError:
             await update.message.reply_text("❌ 你没有权限使用此机器人。")

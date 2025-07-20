@@ -1,5 +1,5 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,13 @@ class TelegramBot:
         self.application.add_handler(
             MessageHandler(filters.Document.ALL, self.handlers.handle_document)
         )
+        
+        # 按钮回调处理器（如果启用确认功能）
+        if hasattr(self.handlers, 'button_handler') and self.handlers.button_handler:
+            self.application.add_handler(
+                CallbackQueryHandler(self.handlers.button_handler.handle_callback)
+            )
+            logger.info("已注册确认按钮处理器")
         
         # 全局错误处理器
         self.application.add_error_handler(self.handlers.error_handler)
