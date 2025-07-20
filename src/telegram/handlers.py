@@ -19,6 +19,11 @@ class TelegramHandlers:
         self.confirmation_manager = None
         self.preview_generator = None
         self.button_handler = None
+        
+        # 媒体组处理缓存
+        self.media_groups = {}
+        import asyncio
+        self.media_group_tasks = {}
     
     def set_confirmation_components(self, confirmation_manager, preview_generator, button_handler):
         """设置确认功能组件"""
@@ -68,10 +73,11 @@ class TelegramHandlers:
 • 支持中英文混合内容
 
 发送图片推文：
-• 发送图片（支持最多4张）
+• 发送单张或多张图片（最多4张）
 • 支持格式：JPG, PNG, GIF
 • 文件大小限制：{self.config.max_image_size // 1024 // 1024}MB
 • 可以添加图片说明文字
+• 多张图片：选择多张图片一起发送
 
 DM监听功能：
 • /dm_status - 查看私信监听状态
@@ -179,14 +185,14 @@ DM监听功能：
             await update.message.reply_text("❌ 处理确认请求时发生错误")
     
     async def _handle_media_with_confirmation(self, update: Update, file_ids: List[str], 
-                                            text: str, media_type: str):
+                                            text: str, media_type: str, context: ContextTypes.DEFAULT_TYPE):
         """使用确认机制处理媒体消息"""
         try:
             # 获取文件URL
             file_urls = []
             for file_id in file_ids:
                 try:
-                    file = await update.message.bot.get_file(file_id)
+                    file = await context.bot.get_file(file_id)
                     file_urls.append(file.file_path)
                 except Exception as e:
                     logger.error(f"获取文件URL失败: {e}")
@@ -228,6 +234,90 @@ DM监听功能：
             ErrorHandler.log_error(e, f"{media_type}确认消息处理")
             await update.message.reply_text("❌ 处理确认请求时发生错误")
     
+    async def _handle_media_group_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE, media_group_id: str):
+        """处理媒体组中的图片"""
+        import asyncio
+        
+        # 获取图片信息
+        photos = update.message.photo
+        largest_photo = max(photos, key=lambda x: x.file_size)
+        caption = update.message.caption or ""
+        
+        # 初始化媒体组缓存
+        if media_group_id not in self.media_groups:
+            self.media_groups[media_group_id] = {
+                'photos': [],
+                'caption': caption,  # 使用第一张图片的说明文字
+                'user_id': update.effective_user.id,
+                'chat_id': update.effective_chat.id,
+                'first_message_id': update.message.message_id
+            }
+        
+        # 添加图片到媒体组
+        self.media_groups[media_group_id]['photos'].append(largest_photo.file_id)
+        
+        # 如果说明文字为空但当前有说明文字，则更新
+        if not self.media_groups[media_group_id]['caption'] and caption:
+            self.media_groups[media_group_id]['caption'] = caption
+        
+        # 取消之前的延迟任务
+        if media_group_id in self.media_group_tasks:
+            self.media_group_tasks[media_group_id].cancel()
+        
+        # 创建新的延迟任务（等待1秒收集完所有图片）
+        self.media_group_tasks[media_group_id] = asyncio.create_task(
+            self._process_media_group_delayed(update, context, media_group_id)
+        )
+    
+    async def _process_media_group_delayed(self, update: Update, context: ContextTypes.DEFAULT_TYPE, media_group_id: str):
+        """延迟处理媒体组"""
+        try:
+            # 等待1秒收集所有图片
+            await asyncio.sleep(1.0)
+            
+            if media_group_id not in self.media_groups:
+                return
+            
+            media_group = self.media_groups[media_group_id]
+            photos = media_group['photos']
+            caption = media_group['caption']
+            
+            # 限制最多4张图片
+            if len(photos) > 4:
+                photos = photos[:4]
+                caption += f"\n\n⚠️ 只处理前4张图片（共{len(media_group['photos'])}张）"
+            
+            logger.info(f"处理媒体组: {media_group_id}, 图片数量: {len(photos)}")
+            
+            # 检查是否启用确认功能
+            if (self.confirmation_manager and 
+                self.button_handler and 
+                self.button_handler.should_require_confirmation(caption, photos)):
+                
+                await self._handle_media_with_confirmation(
+                    update, photos, caption, f"{len(photos)}张图片", context
+                )
+            else:
+                await self._process_media_message(
+                    update, 
+                    photos, 
+                    caption, 
+                    f"{len(photos)}张图片",
+                    context
+                )
+            
+            # 清理缓存
+            del self.media_groups[media_group_id]
+            if media_group_id in self.media_group_tasks:
+                del self.media_group_tasks[media_group_id]
+                
+        except Exception as e:
+            ErrorHandler.log_error(e, "媒体组处理")
+            if media_group_id in self.media_groups:
+                del self.media_groups[media_group_id]
+            if media_group_id in self.media_group_tasks:
+                del self.media_group_tasks[media_group_id]
+    
     async def _handle_direct_send(self, update: Update, message_text: str):
         """直接发送推文（原逻辑）"""
         # 显示处理状态
@@ -259,27 +349,31 @@ DM监听功能：
                 await update.message.reply_text("❌ 没有找到图片。")
                 return
             
-            # 获取最大尺寸的图片
-            largest_photo = max(photos, key=lambda x: x.file_size)
-            
-            # 获取标题文本
-            caption = update.message.caption or ""
-            
-            # 检查是否启用确认功能
-            if (self.confirmation_manager and 
-                self.button_handler and 
-                self.button_handler.should_require_confirmation(caption, [largest_photo.file_id])):
-                
-                await self._handle_media_with_confirmation(
-                    update, [largest_photo.file_id], caption, "图片"
-                )
+            # 检查是否是媒体组的一部分
+            media_group_id = update.message.media_group_id
+            if media_group_id:
+                await self._handle_media_group_photo(update, context, media_group_id)
             else:
-                await self._process_media_message(
-                    update, 
-                    [largest_photo.file_id], 
-                    caption, 
-                    "图片"
-                )
+                # 单张图片处理
+                largest_photo = max(photos, key=lambda x: x.file_size)
+                caption = update.message.caption or ""
+                
+                # 检查是否启用确认功能
+                if (self.confirmation_manager and 
+                    self.button_handler and 
+                    self.button_handler.should_require_confirmation(caption, [largest_photo.file_id])):
+                    
+                    await self._handle_media_with_confirmation(
+                        update, [largest_photo.file_id], caption, "图片", context
+                    )
+                else:
+                    await self._process_media_message(
+                        update, 
+                        [largest_photo.file_id], 
+                        caption, 
+                        "图片",
+                        context
+                    )
             
         except AuthorizationError:
             await update.message.reply_text("❌ 你没有权限使用此机器人。")
@@ -316,7 +410,8 @@ DM监听功能：
                 update, 
                 [document.file_id], 
                 caption, 
-                "文档"
+                "文档",
+                context
             )
             
         except AuthorizationError:
@@ -326,7 +421,7 @@ DM监听功能：
             error_msg = ErrorHandler.format_user_error(e)
             await update.message.reply_text(error_msg)
     
-    async def _process_media_message(self, update: Update, file_ids: List[str], text: str, media_type: str):
+    async def _process_media_message(self, update: Update, file_ids: List[str], text: str, media_type: str, context: ContextTypes.DEFAULT_TYPE):
         """处理媒体消息的通用方法"""
         try:
             # 显示处理状态
@@ -336,7 +431,7 @@ DM监听功能：
             file_urls = []
             for file_id in file_ids:
                 try:
-                    file = await update.message.bot.get_file(file_id)
+                    file = await context.bot.get_file(file_id)
                     file_urls.append(file.file_path)
                 except Exception as e:
                     logger.error(f"获取文件URL失败: {e}")

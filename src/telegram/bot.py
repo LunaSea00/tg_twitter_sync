@@ -30,6 +30,7 @@ class TelegramBot:
             MessageHandler(filters.Document.ALL, self.handlers.handle_document)
         )
         
+        
         # 按钮回调处理器（如果启用确认功能）
         if hasattr(self.handlers, 'button_handler') and self.handlers.button_handler:
             self.application.add_handler(
