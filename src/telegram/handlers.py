@@ -105,12 +105,12 @@ DM监听功能：
         try:
             self._check_authorization(update.effective_user.id)
             
-            # 测试Twitter连接
-            twitter_status = await self.twitter_client.test_connection()
+            # 显示Twitter API状态（避免实际API调用以防止速率限制）
+            twitter_status = "⚠️ 待验证（首次使用时验证）"
             
             status_msg = (
                 f"🔧 **服务状态**\n\n"
-                f"Twitter API: {'✅ 正常' if twitter_status else '❌ 异常'}\n"
+                f"Twitter API: {twitter_status}\n"
                 f"机器人状态: ✅ 运行中\n"
                 f"配置状态: ✅ 已加载\n"
                 f"推文长度限制: {self.config.tweet_max_length}字符"

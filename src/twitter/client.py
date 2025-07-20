@@ -1,5 +1,6 @@
 import logging
 import time
+import os
 import tweepy
 import requests
 import json
@@ -29,30 +30,25 @@ class TwitterClient:
             self.rate_limiter = None
         
         try:
-            # 延迟初始化 - 不立即创建客户端以避免启动时的API调用
-            logger.info("Twitter客户端准备就绪（延迟初始化）")
+            # 完全延迟初始化 - 只存储凭据，不进行任何API相关操作
+            logger.info("📝 Twitter客户端凭据已加载（未验证）")
             
-            # 初始化 OAuth 2.0 处理器（用于DM API）
+            # OAuth 2.0 处理器延迟初始化
             self.oauth2_handler = None
-            if credentials.get('oauth2_client_id'):
-                try:
-                    self.oauth2_handler = TwitterOAuth2(
-                        client_id=credentials['oauth2_client_id'],
-                        client_secret=credentials.get('oauth2_client_secret', ''),
-                        redirect_uri=credentials.get('redirect_uri', 'http://localhost:8080/callback')
-                    )
-                    logger.info("OAuth 2.0处理器初始化成功")
-                except Exception as e:
-                    logger.error(f"OAuth 2.0处理器初始化失败: {e}")
+            self._oauth2_initialized = False
             
             # 用户上下文访问令牌（用于DM API）
             self.user_access_token = credentials.get('user_access_token')
-            if not self.user_access_token:
-                logger.warning("未提供用户访问令牌，DM功能将不可用")
             
             # 媒体上传器将在需要时初始化
             self._media_uploader = None
-            logger.info("Twitter客户端初始化成功")
+            
+            # 检查是否跳过验证
+            skip_verification = config and getattr(config, 'skip_twitter_verification', False)
+            if skip_verification or os.getenv('SKIP_TWITTER_VERIFICATION', '').lower() == 'true':
+                logger.info("⚡ 快速启动模式：跳过API验证")
+            
+            logger.info("✅ Twitter客户端初始化成功（延迟模式）")
         except Exception as e:
             logger.error(f"Twitter客户端初始化失败: {e}")
             raise TwitterAPIError(f"初始化Twitter客户端失败: {e}")
@@ -84,6 +80,21 @@ class TwitterClient:
             self._media_uploader = MediaUploader(self)
         return self._media_uploader
     
+    def _initialize_oauth2_if_needed(self):
+        """按需初始化OAuth 2.0处理器"""
+        if not self._oauth2_initialized and self.credentials.get('oauth2_client_id'):
+            try:
+                self.oauth2_handler = TwitterOAuth2(
+                    client_id=self.credentials['oauth2_client_id'],
+                    client_secret=self.credentials.get('oauth2_client_secret', ''),
+                    redirect_uri=self.credentials.get('redirect_uri', 'http://localhost:8080/callback')
+                )
+                logger.info("OAuth 2.0处理器延迟初始化成功")
+            except Exception as e:
+                logger.error(f"OAuth 2.0处理器延迟初始化失败: {e}")
+            finally:
+                self._oauth2_initialized = True
+    
     @handle_errors("推文发送失败")
     async def create_tweet(self, text: str) -> Dict[str, Any]:
         """创建推文"""
@@ -107,6 +118,11 @@ class TwitterClient:
                     'dry_run': True
                 }
             
+            # 按需验证连接
+            connection_ok = await self.test_connection()
+            if not connection_ok:
+                raise TwitterAPIError("⏳ Twitter API已达到每日限制，请24小时后再试")
+            
             response = self.client.create_tweet(text=text)
             tweet_id = response.data['id']
             
@@ -120,23 +136,23 @@ class TwitterClient:
             
         except tweepy.TooManyRequests as e:
             logger.warning(f"Twitter API频率限制: {e}")
-            raise RateLimitError("发送过于频繁，请稍后重试")
+            raise RateLimitError("⏳ Twitter API已达到每日限制，请24小时后再试")
         
         except tweepy.Forbidden as e:
             logger.error(f"Twitter API禁止访问: {e}")
-            raise TwitterAPIError("没有权限发送推文，请检查API密钥")
+            raise TwitterAPIError("🔑 Twitter API凭据需要重新配置")
         
         except tweepy.Unauthorized as e:
             logger.error(f"Twitter API未授权: {e}")
-            raise TwitterAPIError("Twitter API授权失败，请检查凭据")
+            raise TwitterAPIError("🔑 Twitter API凭据需要重新配置")
         
         except tweepy.BadRequest as e:
             logger.error(f"Twitter API请求错误: {e}")
-            raise TwitterAPIError(f"推文请求格式错误: {e}")
+            raise TwitterAPIError(f"❌ 推文格式错误: {e}")
         
         except Exception as e:
             logger.error(f"Twitter API未知错误: {e}")
-            raise TwitterAPIError(f"发送推文时发生错误: {e}")
+            raise TwitterAPIError(f"❌ Twitter服务暂时不可用，请稍后再试")
     
     @handle_errors("带媒体推文发送失败")
     async def create_tweet_with_media(self, text: str, image_paths: List[str]) -> Dict[str, Any]:
@@ -152,6 +168,11 @@ class TwitterClient:
                 # 如果没有图片，回退到普通推文
                 return await self.create_tweet(text)
             
+            # 按需验证连接
+            connection_ok = await self.test_connection()
+            if not connection_ok:
+                raise TwitterAPIError("⏳ Twitter API已达到每日限制，请24小时后再试")
+            
             # 上传媒体文件
             media_ids = self.media_uploader.upload_multiple_media(image_paths)
             
@@ -166,23 +187,23 @@ class TwitterClient:
             
         except tweepy.TooManyRequests as e:
             logger.warning(f"Twitter API频率限制: {e}")
-            raise RateLimitError("发送过于频繁，请稍后重试")
+            raise RateLimitError("⏳ Twitter API已达到每日限制，请24小时后再试")
         
         except tweepy.Forbidden as e:
             logger.error(f"Twitter API禁止访问: {e}")
-            raise TwitterAPIError("没有权限发送推文，请检查API密钥")
+            raise TwitterAPIError("🔑 Twitter API凭据需要重新配置")
         
         except tweepy.Unauthorized as e:
             logger.error(f"Twitter API未授权: {e}")
-            raise TwitterAPIError("Twitter API授权失败，请检查凭据")
+            raise TwitterAPIError("🔑 Twitter API凭据需要重新配置")
         
         except tweepy.BadRequest as e:
             logger.error(f"Twitter API请求错误: {e}")
-            raise TwitterAPIError(f"推文请求格式错误: {e}")
+            raise TwitterAPIError(f"❌ 媒体推文格式错误: {e}")
         
         except Exception as e:
             logger.error(f"Twitter API未知错误: {e}")
-            raise TwitterAPIError(f"发送带媒体推文时发生错误: {e}")
+            raise TwitterAPIError(f"❌ Twitter服务暂时不可用，请稍后再试")
     
     def validate_tweet_length(self, text: str) -> bool:
         """验证推文长度"""
@@ -197,11 +218,21 @@ class TwitterClient:
         }
     
     async def test_connection(self) -> bool:
-        """测试Twitter连接（带缓存）"""
+        """测试Twitter连接（带缓存）- 按需验证"""
+        # 检查是否跳过验证
+        if self.config and getattr(self.config, 'skip_twitter_verification', False):
+            logger.info("⏭️ 跳过Twitter连接验证（配置禁用）")
+            return True
+            
+        if os.getenv('SKIP_TWITTER_VERIFICATION', '').lower() == 'true':
+            logger.info("⏭️ 跳过Twitter连接验证（环境变量禁用）")
+            return True
+            
         if self._connection_verified is not None:
             return self._connection_verified
         
         try:
+            logger.info("🔍 首次使用Twitter功能，正在验证连接...")
             # 使用速率限制装饰器
             if self.rate_limiter:
                 test_func = self.rate_limiter.rate_limit_handler(self._test_connection_impl)
@@ -210,6 +241,10 @@ class TwitterClient:
                 result = await self._test_connection_impl()
             
             self._connection_verified = result
+            if result:
+                logger.info("✅ Twitter连接验证成功")
+            else:
+                logger.warning("❌ Twitter连接验证失败")
             return result
         except Exception as e:
             logger.error(f"Twitter连接测试失败: {e}")
@@ -423,6 +458,11 @@ class TwitterClient:
         获取私信（优先使用高级DM API，回退到tweepy实现）
         """
         try:
+            # 按需验证DM访问权限
+            dm_access_ok = await self.test_dm_access()
+            if not dm_access_ok:
+                raise TwitterAPIError("🔑 Twitter DM API凭据需要重新配置")
+            
             # 优先尝试使用高级DM API
             if self.user_access_token:
                 result = await self.get_all_dm_events(max_results)
@@ -486,26 +526,39 @@ class TwitterClient:
                 
         except tweepy.TooManyRequests as e:
             logger.warning(f"私信API频率限制: {e}")
-            raise RateLimitError("私信API调用过于频繁，请稍后重试")
+            raise RateLimitError("⏳ Twitter API已达到每日限制，请24小时后再试")
         
         except tweepy.Forbidden as e:
             logger.error(f"私信API禁止访问: {e}")
-            raise TwitterAPIError("没有权限访问私信API，请检查API权限")
+            raise TwitterAPIError("🔑 Twitter DM API凭据需要重新配置")
         
         except tweepy.Unauthorized as e:
             logger.error(f"私信API未授权: {e}")
-            raise TwitterAPIError("私信API授权失败，请检查凭据")
+            raise TwitterAPIError("🔑 Twitter DM API凭据需要重新配置")
         
         except Exception as e:
             logger.error(f"获取私信时发生错误: {e}")
-            raise TwitterAPIError(f"获取私信失败: {e}")
+            raise TwitterAPIError(f"❌ Twitter服务暂时不可用，请稍后再试")
     
     async def test_dm_access(self) -> bool:
-        """测试私信API访问权限（带缓存）"""
+        """测试私信API访问权限（带缓存）- 按需验证"""
+        # 检查是否跳过验证
+        if self.config and getattr(self.config, 'skip_twitter_verification', False):
+            logger.info("⏭️ 跳过DM API验证（配置禁用）")
+            return True
+            
+        if os.getenv('SKIP_TWITTER_VERIFICATION', '').lower() == 'true':
+            logger.info("⏭️ 跳过DM API验证（环境变量禁用）")
+            return True
+            
         if self._dm_access_verified is not None:
             return self._dm_access_verified
         
         try:
+            logger.info("🔍 首次使用DM功能，正在验证访问权限...")
+            # 初始化OAuth2处理器（如果需要）
+            self._initialize_oauth2_if_needed()
+            
             # 使用速率限制装饰器
             if self.rate_limiter:
                 test_func = self.rate_limiter.rate_limit_handler(self._test_dm_access_impl)
@@ -514,6 +567,10 @@ class TwitterClient:
                 result = await self._test_dm_access_impl()
             
             self._dm_access_verified = result
+            if result:
+                logger.info("✅ DM API访问验证成功")
+            else:
+                logger.warning("❌ DM API访问验证失败")
             return result
         except Exception as e:
             logger.error(f"私信API测试时发生未知错误: {e}")

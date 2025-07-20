@@ -73,6 +73,9 @@ class Config:
         # 测试模式配置
         self.dry_run_mode = os.getenv('DRY_RUN_MODE', 'false').lower() == 'true'  # 启用dry-run模式
         
+        # Twitter验证配置
+        self.skip_twitter_verification = os.getenv('SKIP_TWITTER_VERIFICATION', 'false').lower() == 'true'  # 跳过Twitter验证
+        
         self._validate_config()
         logger.info("配置加载完成")
     
