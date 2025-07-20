@@ -124,7 +124,7 @@ python main.py
    - 在项目中点击"Add App"
    - 创建新应用或关联现有应用
 4. **配置App权限**：
-   - App permissions设置为"Read and write"
+   - App permissions设置为"Read and write and Direct message"
    - Type of App选择"Web App"
 5. **获取所需密钥**：
    - API Key
@@ -281,33 +281,11 @@ python -c "from src.config.settings import get_config; from src.twitter.client i
 
 ## 🚀 部署到云平台
 
-### Render部署
-
-项目已配置 `render.yaml`，可直接部署到Render平台。
-
-### Railway部署
-
-支持Railway一键部署，配置环境变量即可。
-
-### 其他平台
-
 支持任何支持Docker的云平台部署。
 
 ## 📄 许可证
 
 MIT License
-
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request来改进这个项目！
-
-## 📞 支持
-
-如果遇到问题，请：
-
-1. 查看[故障排除](#故障排除)部分
-2. 检查日志输出
-3. 在GitHub创建Issue
 
 ## 📝 注意事项
 
