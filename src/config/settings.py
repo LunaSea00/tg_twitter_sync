@@ -54,6 +54,9 @@ class Config:
         self.dm_store_file = os.getenv('DM_STORE_FILE', 'data/processed_dm_ids.json')
         self.dm_store_max_age_days = int(os.getenv('DM_STORE_MAX_AGE_DAYS', '7'))
         
+        # 启动通知配置
+        self.send_startup_notification = os.getenv('SEND_STARTUP_NOTIFICATION', 'true').lower() == 'true'
+        
         self._validate_config()
         logger.info("配置加载完成")
     
@@ -149,7 +152,8 @@ class Config:
             'dm_poll_interval': self.dm_poll_interval,
             'dm_target_chat_id': '***' if self.dm_target_chat_id else None,
             'dm_store_file': self.dm_store_file,
-            'dm_store_max_age_days': self.dm_store_max_age_days
+            'dm_store_max_age_days': self.dm_store_max_age_days,
+            'send_startup_notification': self.send_startup_notification
         }
 
 # 全局配置实例

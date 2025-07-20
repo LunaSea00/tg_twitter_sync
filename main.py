@@ -135,8 +135,9 @@ class TwitterBot:
             if self.dm_monitor:
                 self.logger.info("📩 DM监听功能已启用，将监听Twitter私信并转发到Telegram")
             
-            # 发送启动通知给授权用户
-            await self._send_startup_notification()
+            # 发送启动通知给授权用户（如果启用）
+            if self.config.send_startup_notification:
+                await self._send_startup_notification()
             
             # 保持运行
             await asyncio.Event().wait()
@@ -202,8 +203,8 @@ class TwitterBot:
 🐦 Twitter API：{twitter_status}
 📩 DM监听功能：{dm_status}
 🔗 健康检查：正常
-现在可以发布推文了
----------------------------"""
+现在可以发布推文了(●ˇ∀ˇ●)
+"""
             
             # 发送通知消息
             await self.telegram_bot.application.bot.send_message(
