@@ -63,6 +63,16 @@ class Config:
         self.require_confirmation_for_all = os.getenv('REQUIRE_CONFIRMATION_FOR_ALL', 'true').lower() == 'true'
         self.confirmation_button_timeout = int(os.getenv('CONFIRMATION_BUTTON_TIMEOUT', '900'))  # 15分钟按钮超时
         
+        # 速率限制配置
+        self.rate_limit_min_interval = float(os.getenv('RATE_LIMIT_MIN_INTERVAL', '1.0'))  # 最小请求间隔（秒）
+        self.rate_limit_max_retries = int(os.getenv('RATE_LIMIT_MAX_RETRIES', '3'))  # 最大重试次数
+        self.rate_limit_backoff_factor = float(os.getenv('RATE_LIMIT_BACKOFF_FACTOR', '2.0'))  # 退避因子
+        self.rate_limit_enable_cache = os.getenv('RATE_LIMIT_ENABLE_CACHE', 'true').lower() == 'true'  # 启用缓存
+        self.rate_limit_cache_ttl = int(os.getenv('RATE_LIMIT_CACHE_TTL', '300'))  # 缓存TTL（秒）
+        
+        # 测试模式配置
+        self.dry_run_mode = os.getenv('DRY_RUN_MODE', 'false').lower() == 'true'  # 启用dry-run模式
+        
         self._validate_config()
         logger.info("配置加载完成")
     
@@ -123,6 +133,19 @@ class Config:
         
         if self.confirmation_button_timeout <= 0:
             raise ConfigurationError("CONFIRMATION_BUTTON_TIMEOUT必须大于0")
+        
+        # 验证速率限制配置
+        if self.rate_limit_min_interval < 0:
+            raise ConfigurationError("RATE_LIMIT_MIN_INTERVAL必须大于或等于0")
+        
+        if self.rate_limit_max_retries < 0:
+            raise ConfigurationError("RATE_LIMIT_MAX_RETRIES必须大于或等于0")
+        
+        if self.rate_limit_backoff_factor <= 0:
+            raise ConfigurationError("RATE_LIMIT_BACKOFF_FACTOR必须大于0")
+        
+        if self.rate_limit_cache_ttl <= 0:
+            raise ConfigurationError("RATE_LIMIT_CACHE_TTL必须大于0")
     
     @property
     def twitter_credentials(self) -> Dict[str, str]:

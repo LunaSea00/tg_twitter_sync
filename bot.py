@@ -228,8 +228,9 @@ class TwitterBot:
 📩 <b>DM功能:</b> {'可用' if self.dm_manager else '不可用'}
 ⏰ <b>启动时间:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-📝 发送任何消息给我，我会自动转发到你的Twitter账户。
-使用 /dm 启用私信监听功能。
+📝 发送任何消息给我，我会自动转发到你的Twitter账户
+使用 /dm 启用私信监听功能
+发送 /help 查看帮助
             """.strip()
             
             await self.send_telegram_message(startup_message)

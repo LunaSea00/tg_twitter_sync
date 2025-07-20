@@ -61,7 +61,8 @@ class TwitterBot:
             # 初始化服务
             self.twitter_client = TwitterClient(
                 self.config.twitter_credentials, 
-                self.config.tweet_max_length
+                self.config.tweet_max_length,
+                self.config
             )
             self.auth_service = AuthService(self.config.authorized_user_id)
             # 暂时先创建handlers，稍后会传递确认功能组件
@@ -131,18 +132,9 @@ class TwitterBot:
             # 初始化并启动Telegram机器人
             await self.telegram_bot.initialize()
             
-            # 测试Twitter连接
-            if await self.twitter_client.test_connection():
-                self.logger.info("✅ Twitter连接测试成功")
-            else:
-                self.logger.warning("⚠️ Twitter连接测试失败，但将继续运行")
-            
-            # 测试DM API权限（如果启用）
-            if self.dm_monitor:
-                if await self.twitter_client.test_dm_access():
-                    self.logger.info("✅ Twitter DM API权限测试成功")
-                else:
-                    self.logger.warning("⚠️ Twitter DM API权限测试失败，DM监听可能无法正常工作")
+            # 跳过启动时的API验证以避免速率限制
+            # API连接将在实际使用时进行懒加载验证
+            self.logger.info("⏭️ 跳过启动时API验证以避免速率限制")
             
             # 获取机器人信息
             bot_info = self.telegram_bot.get_bot_info()
@@ -226,8 +218,8 @@ class TwitterBot:
     async def _send_startup_notification(self):
         """发送启动通知给授权用户"""
         try:
-            # 检查所有关键服务状态
-            twitter_status = "✅ 正常" if await self.twitter_client.test_connection() else "❌ 异常"
+            # 检查所有关键服务状态（不进行实际API调用以避免速率限制）
+            twitter_status = "⚠️ 待验证"
             dm_status = "✅ 启用" if self.dm_monitor else "❌ 禁用"
             
             notification_message = f"""🤖 专属小BOT启动成功！

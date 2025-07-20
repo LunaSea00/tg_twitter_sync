@@ -1,29 +1,36 @@
 import logging
+import time
 import tweepy
 import requests
 import json
 from typing import Dict, Any, List, Optional
 from ..utils.exceptions import TwitterAPIError, RateLimitError
 from ..utils.error_handler import handle_errors, ErrorHandler
+from ..utils.rate_limiter import get_rate_limiter
 from ..media.uploader import MediaUploader
 from .oauth import TwitterOAuth2
 
 logger = logging.getLogger(__name__)
 
 class TwitterClient:
-    def __init__(self, credentials: Dict[str, str], max_length: int = 280):
+    def __init__(self, credentials: Dict[str, str], max_length: int = 280, config=None):
         self.max_length = max_length
         self.credentials = credentials
+        self.config = config
+        self._client = None
+        self._connection_verified = None
+        self._dm_access_verified = None
+        
+        # 初始化速率限制器
+        if config:
+            from ..utils.rate_limiter import get_rate_limiter
+            self.rate_limiter = get_rate_limiter(config)
+        else:
+            self.rate_limiter = None
+        
         try:
-            # 初始化主客户端（用于发推等功能）
-            self.client = tweepy.Client(
-                bearer_token=credentials['bearer_token'],
-                consumer_key=credentials['consumer_key'],
-                consumer_secret=credentials['consumer_secret'],
-                access_token=credentials['access_token'],
-                access_token_secret=credentials['access_token_secret'],
-                wait_on_rate_limit=True
-            )
+            # 延迟初始化 - 不立即创建客户端以避免启动时的API调用
+            logger.info("Twitter客户端准备就绪（延迟初始化）")
             
             # 初始化 OAuth 2.0 处理器（用于DM API）
             self.oauth2_handler = None
@@ -43,12 +50,39 @@ class TwitterClient:
             if not self.user_access_token:
                 logger.warning("未提供用户访问令牌，DM功能将不可用")
             
-            # 初始化媒体上传器
-            self.media_uploader = MediaUploader(self)
+            # 媒体上传器将在需要时初始化
+            self._media_uploader = None
             logger.info("Twitter客户端初始化成功")
         except Exception as e:
             logger.error(f"Twitter客户端初始化失败: {e}")
             raise TwitterAPIError(f"初始化Twitter客户端失败: {e}")
+    
+    @property
+    def client(self):
+        """获取Twitter客户端（延迟初始化）"""
+        if self._client is None:
+            try:
+                self._client = tweepy.Client(
+                    bearer_token=self.credentials['bearer_token'],
+                    consumer_key=self.credentials['consumer_key'],
+                    consumer_secret=self.credentials['consumer_secret'],
+                    access_token=self.credentials['access_token'],
+                    access_token_secret=self.credentials['access_token_secret'],
+                    wait_on_rate_limit=True
+                )
+                logger.info("Twitter客户端延迟初始化完成")
+            except Exception as e:
+                logger.error(f"Twitter客户端延迟初始化失败: {e}")
+                raise TwitterAPIError(f"Twitter客户端初始化失败: {e}")
+        return self._client
+    
+    @property
+    def media_uploader(self):
+        """获取媒体上传器（延迟初始化）"""
+        if self._media_uploader is None:
+            from ..media.uploader import MediaUploader
+            self._media_uploader = MediaUploader(self)
+        return self._media_uploader
     
     @handle_errors("推文发送失败")
     async def create_tweet(self, text: str) -> Dict[str, Any]:
@@ -59,6 +93,19 @@ class TwitterClient:
             
             if not text.strip():
                 raise TwitterAPIError("推文内容不能为空")
+            
+            # 检查dry-run模式
+            if self.config and self.config.dry_run_mode:
+                logger.info(f"🧪 DRY-RUN模式: 模拟发送推文")
+                logger.info(f"📝 推文内容: {text}")
+                fake_tweet_id = f"dry_run_{int(time.time())}"
+                return {
+                    'success': True,
+                    'tweet_id': fake_tweet_id,
+                    'text': text,
+                    'url': f"https://twitter.com/user/status/{fake_tweet_id}",
+                    'dry_run': True
+                }
             
             response = self.client.create_tweet(text=text)
             tweet_id = response.data['id']
@@ -150,7 +197,27 @@ class TwitterClient:
         }
     
     async def test_connection(self) -> bool:
-        """测试Twitter连接"""
+        """测试Twitter连接（带缓存）"""
+        if self._connection_verified is not None:
+            return self._connection_verified
+        
+        try:
+            # 使用速率限制装饰器
+            if self.rate_limiter:
+                test_func = self.rate_limiter.rate_limit_handler(self._test_connection_impl)
+                result = await test_func()
+            else:
+                result = await self._test_connection_impl()
+            
+            self._connection_verified = result
+            return result
+        except Exception as e:
+            logger.error(f"Twitter连接测试失败: {e}")
+            self._connection_verified = False
+            return False
+    
+    async def _test_connection_impl(self) -> bool:
+        """内部连接测试实现"""
         try:
             self.client.get_me()
             logger.info("Twitter连接测试成功")
@@ -434,7 +501,27 @@ class TwitterClient:
             raise TwitterAPIError(f"获取私信失败: {e}")
     
     async def test_dm_access(self) -> bool:
-        """测试私信API访问权限"""
+        """测试私信API访问权限（带缓存）"""
+        if self._dm_access_verified is not None:
+            return self._dm_access_verified
+        
+        try:
+            # 使用速率限制装饰器
+            if self.rate_limiter:
+                test_func = self.rate_limiter.rate_limit_handler(self._test_dm_access_impl)
+                result = await test_func()
+            else:
+                result = await self._test_dm_access_impl()
+            
+            self._dm_access_verified = result
+            return result
+        except Exception as e:
+            logger.error(f"私信API测试时发生未知错误: {e}")
+            self._dm_access_verified = False
+            return False
+    
+    async def _test_dm_access_impl(self) -> bool:
+        """内部DM访问测试实现"""
         try:
             # 尝试获取少量私信来测试权限
             await self.get_direct_messages(max_results=1)
