@@ -15,7 +15,6 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("start", self.handlers.start))
         self.application.add_handler(CommandHandler("help", self.handlers.help))
         self.application.add_handler(CommandHandler("status", self.handlers.status))
-        self.application.add_handler(CommandHandler("stats", self.handlers.stats))
         self.application.add_handler(CommandHandler("dm_status", self.handlers.dm_status))
         
         # 消息处理器（处理非命令的文本消息，包括私信）

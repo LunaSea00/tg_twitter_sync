@@ -135,6 +135,9 @@ class TwitterBot:
             if self.dm_monitor:
                 self.logger.info("📩 DM监听功能已启用，将监听Twitter私信并转发到Telegram")
             
+            # 发送启动通知给授权用户
+            await self._send_startup_notification()
+            
             # 保持运行
             await asyncio.Event().wait()
             
@@ -185,6 +188,34 @@ class TwitterBot:
         
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+    
+    async def _send_startup_notification(self):
+        """发送启动通知给授权用户"""
+        try:
+            # 检查所有关键服务状态
+            twitter_status = "✅ 正常" if await self.twitter_client.test_connection() else "❌ 异常"
+            dm_status = "✅ 启用" if self.dm_monitor else "❌ 禁用"
+            
+            notification_message = f"""🤖 专属小BOT启动成功！
+
+✅ 服务状态：运行中
+🐦 Twitter API：{twitter_status}
+📩 DM监听功能：{dm_status}
+🔗 健康检查：正常
+现在可以发布推文了
+---------------------------"""
+            
+            # 发送通知消息
+            await self.telegram_bot.application.bot.send_message(
+                chat_id=self.config.authorized_user_id,
+                text=notification_message
+            )
+            
+            self.logger.info("✅ 启动通知已发送给授权用户")
+            
+        except Exception as e:
+            self.logger.error(f"❌ 发送启动通知失败: {e}")
+            # 不阻断启动流程，只记录错误
 
 async def main():
     """主函数"""

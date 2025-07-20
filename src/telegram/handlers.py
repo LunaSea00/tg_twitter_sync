@@ -51,7 +51,6 @@ class TelegramHandlers:
 • `/start` - 开始使用机器人
 • `/help` - 显示此帮助信息
 • `/status` - 检查服务状态
-• `/stats <消息>` - 查看消息统计信息
 
 **发送推文：**
 • 直接发送文本消息即可发布到Twitter
@@ -107,33 +106,6 @@ class TelegramHandlers:
         except Exception as e:
             ErrorHandler.log_error(e, "status命令")
             await update.message.reply_text("❌ 无法获取状态信息。")
-    
-    async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """显示消息统计信息"""
-        try:
-            self._check_authorization(update.effective_user.id)
-            
-            if not context.args:
-                await update.message.reply_text("使用方法: /stats <消息内容>")
-                return
-            
-            text = ' '.join(context.args)
-            stats = self.twitter_client.get_tweet_stats(text)
-            
-            stats_msg = (
-                f"📊 **消息统计**\n\n"
-                f"📝 内容: {text[:50]}{'...' if len(text) > 50 else ''}\n"
-                f"📏 长度: {stats['length']} 字符\n"
-                f"📋 剩余: {stats['remaining']} 字符\n"
-                f"🚦 状态: {'✅ 可发送' if stats['remaining'] >= 0 else '❌ 超出限制'}"
-            )
-            await update.message.reply_text(stats_msg, parse_mode='Markdown')
-            
-        except AuthorizationError:
-            await update.message.reply_text("❌ 你没有权限使用此机器人。")
-        except Exception as e:
-            ErrorHandler.log_error(e, "stats命令")
-            await update.message.reply_text("❌ 无法获取统计信息。")
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
