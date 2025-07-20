@@ -158,7 +158,7 @@ class TwitterOAuth2:
                     self.send_response(200)
                     self.send_header('Content-type', 'text/html; charset=utf-8')
                     self.end_headers()
-                    self.wfile.write(b'''
+                    self.wfile.write('''
                     <!DOCTYPE html>
                     <html>
                     <head>
@@ -176,7 +176,7 @@ class TwitterOAuth2:
                     self.send_response(400)
                     self.send_header('Content-type', 'text/html; charset=utf-8')
                     self.end_headers()
-                    self.wfile.write(b'''
+                    self.wfile.write('''
                     <!DOCTYPE html>
                     <html>
                     <head>
